@@ -1,4 +1,4 @@
-#Criado por Ghost 04- Diqui Joaquim
+#Criado por Ghost 04- Diqui Joaquim 
 import os
 import shutil
 import flet as ft
