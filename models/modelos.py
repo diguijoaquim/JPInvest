@@ -19,10 +19,12 @@ class Produto(Base):
     titulo = Column(String(100))
     preco = Column(Float)
     barcode=Column(String(30))
+    estoquerequired=Column(String(10),default="Sim")
     estoque = Column(Integer)
     image=Column(String(100))
     quantidade_venda=Column(Integer)
     categoria=Column(String(50))
+
 
 
     

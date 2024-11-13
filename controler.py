@@ -5,7 +5,8 @@ from datetime import datetime
 import re
 import json
 import os
-from sqlalchemy import or_
+from sqlalchemy import or_,asc,desc
+from sqlalchemy.sql import func
 
 
 info= {
@@ -104,9 +105,9 @@ def CadastrarUsuario(n,c,u,s_):
     db.commit()
     print(f"O usuario {n} Foi Cadastrado com sucesso")
 
-def CadastrarProduto(titulo,barcode,categoria, preco, estoque, image):
+def CadastrarProduto(titulo,barcode,categoria, preco,estoquerequired, estoque, image):
     if titulo != "" and preco is not None and estoque != "" and image != "":
-        novoProduto = Produto(titulo=titulo,barcode=barcode,categoria=categoria, preco=preco, estoque=estoque, image=image)
+        novoProduto = Produto(titulo=titulo,barcode=barcode,categoria=categoria, preco=preco,estoquerequired=estoquerequired,estoque=estoque, image=image)
         db.add(novoProduto)
         db.commit()
         print(f"O Produto {titulo} foi cadastrado com sucesso")
@@ -221,19 +222,24 @@ def incrementarStoque(id_produto,qtd):
         print("O produto nao foi encontrado")
 def decrementarStoque(id_produto,qtd):
     produto=db.query(Produto).filter_by(id=id_produto).first()
+    print(id_produto)
     if(produto):
         p=produto.estoque
-        produto.estoque=produto.estoque-qtd
-        db.commit()
-        print(f"Estoque atualizado d {p} para {produto.estoque}")
+        if produto.estoque>=qtd:
+            produto.estoque=produto.estoque-qtd
+            db.commit()
+            return f"Estoque atualizado de {p} para {produto.estoque}"
+        else:
+            return f"O estoque atual e menor que \n a quantidade inserida"
     else:
         print("O produto nao foi encontrado")
+        
 def deduceStockCart(carrinho):
     for i in carrinho:
         #achar o produto no banco
         produto=db.query(Produto).filter_by(titulo=i['nome']).first()
         #reduzir o estoque com a funcao abaixo, para cada item
-        if i['categoria']!="Servicos de lavagem":
+        if i['estoquerequired']!="Nao":
             decrementarStoque(produto.id,i['quantidade'])
 
 def checkCartStock(carrinho):
@@ -243,7 +249,7 @@ def checkCartStock(carrinho):
         produto=db.query(Produto).filter_by(titulo=i['nome']).first()
         #print(produto.estoque)
         #se o produto.estoque for maior que quantidade de item retorna True
-        if produto.categoria=="Servicos de lavagem":
+        if produto.estoquerequired=="Nao":
             return {"msg":"O estoque e suficiente","resultado":True}
         if produto.estoque>i['quantidade']:
             print("estoque e suficiente")
@@ -304,7 +310,7 @@ def RemoveRelatorio(day):
 
 
 def getRelatorios():
-    return db.query(RelatorioVenda).all()
+    return db.query(RelatorioVenda).order_by(desc(RelatorioVenda.id)).all()
 
 def getRelatorioUnico(day):
     return db.query(RelatorioVenda).filter_by(data=day).first()

@@ -113,7 +113,7 @@ produtos_em_json=[]
 ultima_venda={}
 username=''
 caixa=''
-
+selected_item_id=None
 
 
 relatorios=ft.Column(controls=[
@@ -133,7 +133,7 @@ def main(page: ft.Page):
     page.padding=0
     page.window.full_screen=True
     altura=page.window.height+150
-    global hora,banco
+    global hora,banco,selected_item_id
     def CheckIsLoged():
         return page.client_storage.get("loged")
     
@@ -230,9 +230,9 @@ def main(page: ft.Page):
                                                  content=ft.Column([
                                                      clientes,mesa
                                                     ]),)),
-                    ft.Stack(width=200,height=650,controls=[
+                    ft.Stack(width=260,height=650,controls=[
                     lista_vendas,
-                    ft.Card(width=240,
+                    ft.Card(width=235,
                             bottom=260,
                             content=ft.Container(padding=10,content=ft.Column(controls=[
                                 total_text
@@ -394,7 +394,7 @@ def main(page: ft.Page):
                                                         ]),)),
                         ft.Stack(width=260,height=650,controls=[
                         lista_vendas,
-                        ft.Card(width=240,
+                        ft.Card(width=235,
                                 bottom=260,
                                 content=ft.Container(padding=10,content=ft.Column(controls=[
                                     total_text
@@ -590,6 +590,12 @@ def main(page: ft.Page):
         ])
     ])
     nome_do_cliente = ft.Text(value="",size=30,weight="bold")
+
+    carrinho_show=ft.AlertDialog(title=ft.Text("Produtos escolhidos"))
+
+    def show_carrinho(e):
+        carrinho_show.content=ft.Container(width=600,height=400,padding=10,content=lista_vendas)
+        page.open(carrinho_show)
     def fechar_contas(e):
         global ultima_venda,carrinho_s,total_valor
         id = e.control.key
@@ -612,6 +618,9 @@ def main(page: ft.Page):
                 ft.IconButton(icon=ft.icons.DELETE, on_click=limpar,icon_color="red"),
                 ft.IconButton(icon=ft.icons.LIST, on_click=addcontas,),
                 ft.IconButton(icon=ft.icons.CHECK, on_click=guardar),
+                ft.IconButton(icon=ft.icons.VISIBILITY, on_click=show_carrinho),
+                
+                
             ])
         ]))
         lista_vendas.controls.clear()
@@ -622,6 +631,7 @@ def main(page: ft.Page):
                 content=ft.Card(content=ft.Row(
                     controls=[
                         ft.Image(src=f'{imagens}/{item['image']}', width=40, height=40, border_radius=8),
+                        ft.Text(item['nome']),
                         ft.Row(controls=[ft.Text(f"{item['preco']} MT", size=8)]),
                         ft.Text(f"Qtd: {item['quantidade']}"),  ft.PopupMenuButton(items=[
                             ft.PopupMenuItem(text="diminuir",on_click=decrement_item, icon=item['id']),
@@ -1176,6 +1186,7 @@ def main(page: ft.Page):
                     ft.IconButton(icon=ft.icons.DELETE, on_click=limpar,icon_color="red"),
                     ft.IconButton(icon=ft.icons.LIST, on_click=addcontas,),
                     ft.IconButton(icon=ft.icons.CHECK, on_click=guardar),
+                    ft.IconButton(icon=ft.icons.VISIBILITY, on_click=show_carrinho),
                 ])
             ]))
         lista_vendas.controls.clear()
@@ -1201,6 +1212,7 @@ def main(page: ft.Page):
                     ft.IconButton(icon=ft.icons.DELETE, on_click=limpar,icon_color="red"),
                     ft.IconButton(icon=ft.icons.LIST, on_click=addcontas,),
                     ft.IconButton(icon=ft.icons.CHECK, on_click=guardar),
+                    ft.IconButton(icon=ft.icons.VISIBILITY, on_click=show_carrinho),
                 ])
             ])
     ])       
@@ -1247,7 +1259,8 @@ def main(page: ft.Page):
                     "preco": produto.preco,
                     "image": produto.image,
                     "quantidade": quantidade_valor,
-                    "total": produto.preco * quantidade_valor
+                    "total": produto.preco * quantidade_valor,
+                    "estoquerequired":produto.estoquerequired
                 }
             )
 
@@ -1281,6 +1294,7 @@ def main(page: ft.Page):
                 ft.IconButton(icon=ft.icons.DELETE, on_click=limpar,icon_color="red"),
                 ft.IconButton(icon=ft.icons.LIST, on_click=addcontas,),
                 ft.IconButton(icon=ft.icons.CHECK, on_click=guardar),
+                ft.IconButton(icon=ft.icons.VISIBILITY, on_click=show_carrinho),
             ])
         ]))
 
@@ -1293,6 +1307,7 @@ def main(page: ft.Page):
                 content=ft.Card(content=ft.Row(
                     controls=[
                         ft.Image(src=f'{imagens}/{item['image']}', width=40, height=40, border_radius=8),
+                        ft.Text(item['nome']),
                         ft.Row(controls=[ft.Text(f"{item['preco']} MT", size=8)]),
                         ft.Text(f"Qtd: {item['quantidade']}"),  ft.PopupMenuButton(items=[
                             ft.PopupMenuItem(text="diminuir",on_click=decrement_item, icon=item['id']),
@@ -1333,6 +1348,7 @@ def main(page: ft.Page):
                 ft.IconButton(icon=ft.icons.DELETE, on_click=limpar,icon_color="red"),
                 ft.IconButton(icon=ft.icons.LIST, on_click=addcontas,),
                 ft.IconButton(icon=ft.icons.CHECK, on_click=guardar),
+                ft.IconButton(icon=ft.icons.VISIBILITY, on_click=show_carrinho),
             ])
         ]))
 
@@ -1393,6 +1409,7 @@ def main(page: ft.Page):
                     ft.IconButton(icon=ft.icons.DELETE, on_click=limpar, icon_color="red"),
                     ft.IconButton(icon=ft.icons.LIST, on_click=addcontas),
                     ft.IconButton(icon=ft.icons.CHECK, on_click=guardar),
+                    ft.IconButton(icon=ft.icons.VISIBILITY, on_click=show_carrinho),
                 ])
             ])
         )
@@ -1406,6 +1423,7 @@ def main(page: ft.Page):
                         content=ft.Row(
                             controls=[
                                 ft.Image(src=f'{imagens}/{item['image']}', width=40, height=40, border_radius=8),
+                                ft.Text(item['nome']),
                                 ft.Text(f"{item['preco']} MT", size=8),
                                 ft.Text(f"Qtd: {item['quantidade']}"),  # Exibe a quantidade correta
                                 ft.PopupMenuButton(
@@ -1460,7 +1478,8 @@ def main(page: ft.Page):
                     "preco": produto.preco,
                     "image": produto.image,
                     "quantidade": quantidade_valor,
-                    "total": produto.preco * quantidade_valor
+                    "total": produto.preco * quantidade_valor,
+                    "estoquerequired":produto.estoquerequired
                 }
             )
 
@@ -1493,6 +1512,7 @@ def main(page: ft.Page):
                 ft.IconButton(icon=ft.icons.DELETE, on_click=limpar,icon_color="red"),
                 ft.IconButton(icon=ft.icons.LIST, on_click=addcontas,),
                 ft.IconButton(icon=ft.icons.CHECK, on_click=guardar),
+                ft.IconButton(icon=ft.icons.VISIBILITY, on_click=show_carrinho),
             ])
         ]))
 
@@ -1503,6 +1523,7 @@ def main(page: ft.Page):
                 content=ft.Card(content=ft.Row(
                     controls=[
                         ft.Image(src=f'{imagens}/{item['image']}', width=40, height=40, border_radius=8),
+                        ft.Text(item['nome']),
                         ft.Row(controls=[ft.Text(f"{item['preco']} MT", size=12)]),
                         ft.Text(f"Qtd: {item['quantidade']}"),  # Atualiza a quantidade aqui
                         ft.PopupMenuButton(items=[
@@ -1547,7 +1568,8 @@ def main(page: ft.Page):
                         "categoria":produto.categoria,
                         "image": produto.image,
                         "quantidade": quantidade_valor,
-                        "total": produto.preco * quantidade_valor
+                        "total": produto.preco * quantidade_valor,
+                        "estoquerequired":produto.estoquerequired
                     }
                 )
 
@@ -1580,6 +1602,7 @@ def main(page: ft.Page):
                     ft.IconButton(icon=ft.icons.DELETE, on_click=limpar,icon_color="red"),
                     ft.IconButton(icon=ft.icons.LIST, on_click=addcontas,),
                     ft.IconButton(icon=ft.icons.CHECK, on_click=guardar),
+                    ft.IconButton(icon=ft.icons.VISIBILITY, on_click=show_carrinho),
                 ])
             ]))
 
@@ -1590,6 +1613,7 @@ def main(page: ft.Page):
                     content=ft.Card(content=ft.Row(
                         controls=[
                             ft.Image(src=f'{imagens}/{item['image']}', width=40, height=40, border_radius=8),
+                            ft.Text(item['nome']),
                             ft.Row(controls=[ft.Text(f"{item['preco']} MT", size=12)]),
                             ft.Text(f"Qtd: {item['quantidade']}"),  # Atualiza a quantidade aqui
                             ft.PopupMenuButton(items=[
@@ -1609,6 +1633,7 @@ def main(page: ft.Page):
         page.update()
         if e.control.value=="Todos os Produtos":
             for i in verProdutos():
+                estoque_require = i.estoquerequired if i.estoquerequired not in [None, ""] else "Sim"
                 produto_id = i.id  # Captura o ID do produto atual
                 produtos.rows.append(
                     ft.DataRow(
@@ -1618,9 +1643,11 @@ def main(page: ft.Page):
                         ft.DataCell(ft.Text(i.barcode)),
                         ft.DataCell(ft.Text(i.categoria)),
                         ft.DataCell(ft.Text(i.estoque,size=18,weight='bold')),
+                        ft.DataCell(ft.Text(estoque_require)),
                         ft.DataCell(ft.PopupMenuButton(
                                     items=[
                                         ft.PopupMenuItem(text="Editar", on_click=lambda e, produto_id=produto_id: atualizar(produto_id)),
+                                        ft.PopupMenuItem(text="Deduzir Estoque",  on_click=lambda e, produto_id=produto_id: open_estoque(produto_id)),
                                         ft.PopupMenuItem(text="Deletar", on_click=lambda e, produto_id=produto_id: eliminarProoduto(produto_id)),
                                     ]
                                 ),),
@@ -1631,6 +1658,7 @@ def main(page: ft.Page):
         else:
             produtos.rows.clear()
             for i in pesquisaProduto(e.control.value):
+                estoque_require = i.estoquerequired if i.estoquerequired not in [None, ""] else "Sim"
                 produto_id = i.id  # Captura o ID do produto atual
                 produtos.rows.append(
                     ft.DataRow(
@@ -1640,9 +1668,11 @@ def main(page: ft.Page):
                         ft.DataCell(ft.Text(i.barcode)),
                         ft.DataCell(ft.Text(i.categoria)),
                         ft.DataCell(ft.Text(i.estoque,size=18,weight='bold')),
+                        ft.DataCell(ft.Text(estoque_require)),
                         ft.DataCell(ft.PopupMenuButton(
                                     items=[
                                         ft.PopupMenuItem(text="Editar", on_click=lambda e, produto_id=produto_id: atualizar(produto_id)),
+                                        ft.PopupMenuItem(text="Deduzir Estoque",  on_click=lambda e, produto_id=produto_id: open_estoque(produto_id)),
                                         ft.PopupMenuItem(text="Deletar", on_click=lambda e, produto_id=produto_id: eliminarProoduto(produto_id)),
                                     ]
                                 ),),
@@ -1702,6 +1732,28 @@ def main(page: ft.Page):
                                     ])
                                     ,on_hover=hovercard,on_click=adicionar_Carinho,on_long_press=dl_more_carinho,key=f'{i.id}')),) 
         page.update()
+    quant_estoque=ft.TextField(label="Digite a quantidade")
+
+    def dcmt(e):
+        global selected_item_id
+        resposta=decrementarStoque(selected_item_id,int(quant_estoque.value))
+        if "Estoque atualizado" in resposta:
+            update_produtos()
+            page.open(ft.AlertDialog(title=ft.Text("PDV Lite"),content=ft.Row([ft.Icon(ft.icons.INFO,color=ft.colors.GREEN_500),ft.Text(resposta,weight='bold')])))
+        else:
+            page.open(ft.AlertDialog(title=ft.Text("PDV Lite"),content=ft.Row([ft.Icon(ft.icons.INFO,color='red'),ft.Text(resposta,weight='bold')])))
+
+        
+            
+    decrement_dialog=ft.AlertDialog(title=ft.Text("Decrementar"),
+                                    content=quant_estoque,
+                                    actions=[
+                                        ft.TextButton("Cancelar",on_click=lambda e:page.close(decrement_dialog) ),
+                                        ft.ElevatedButton("Retirar",bgcolor=ft.colors.ORANGE_600,color=ft.colors.WHITE,on_click=dcmt)
+                                    ])
+
+    
+
     def atualizar(id):
         if(page.client_storage.get('user')['cargo'])=='admin':
             produto=acharUmProduto(id) 
@@ -1711,12 +1763,17 @@ def main(page: ft.Page):
             e_preco_input.value=produto.preco
             e_estoque.value=produto.estoque
             input_categoria.value=produto.categoria
+            if produto.estoquerequired == '' or produto.estoquerequired==None:
+                e_estoqueRequired.value="Sim"
+            else:
+                e_estoqueRequired.value="Nao"
             dlg_edit=ft.AlertDialog(
             title=ft.Text("Atualizar o Produto", size=24),
             content=ft.Column([
                 e_nome_input,
                 e_barcode_input,
                 e_preco_input,
+                e_estoqueRequired,
                 e_estoque,
                 input_categoria,
                 status_text,
@@ -1739,11 +1796,15 @@ def main(page: ft.Page):
         deletarProduto(id)
         update_menu()
         update_produtos()
-
+    def open_estoque(id):
+        global selected_item_id
+        selected_item_id=id
+        page.open(decrement_dialog)
     def update_produtos():
         page.update()
         produtos.rows.clear()
         for i in verProdutos():
+            estoque_require = i.estoquerequired if i.estoquerequired not in [None, ""] else "Sim"
             produto_id = i.id  # Captura o ID do produto atual
             produtos.rows.append(
                     ft.DataRow(
@@ -1753,10 +1814,13 @@ def main(page: ft.Page):
                         ft.DataCell(ft.Text(i.barcode)),
                         ft.DataCell(ft.Text(i.categoria)),
                         ft.DataCell(ft.Text(i.estoque,size=18,weight='bold')),
+                        ft.DataCell(ft.Text(estoque_require)),
                         ft.DataCell(ft.PopupMenuButton(
                                     items=[
                                         ft.PopupMenuItem(text="Editar", on_click=lambda e, produto_id=produto_id: atualizar(produto_id)),
+                                        ft.PopupMenuItem(text="Deduzir Estoque",  on_click=lambda e, produto_id=produto_id: open_estoque(produto_id)),
                                         ft.PopupMenuItem(text="Deletar", on_click=lambda e, produto_id=produto_id: eliminarProoduto(produto_id)),
+
                                     ]
                                 ),),
                     ],
@@ -1856,6 +1920,7 @@ def main(page: ft.Page):
                 ft.DataColumn(ft.Text("Codigo de Barra")),
                 ft.DataColumn(ft.Text("Categoria")),
                 ft.DataColumn(ft.Text("Estoque Atual"), numeric=True),
+                ft.DataColumn(ft.Text("Estoque Importa?")),
                 ft.DataColumn(ft.Text("accoes")),
             ])
     update_menu()
@@ -1869,7 +1934,7 @@ def main(page: ft.Page):
             ft.Row(
                 controls=[
                     lista_relatorio,
-                    ft.Container(expand=True,height=740,padding=10,content=ft.Column(
+                    ft.Container(expand=True,height=altura,padding=10,content=ft.Column(
                     controls=[
                         ft.Text("Detalhes Do Relatorio",weight="bold",size=30),
                         relatorios
@@ -1999,6 +2064,10 @@ def main(page: ft.Page):
         
     nome_input = ft.TextField(label="Nome", width=400)
     preco_input = ft.TextField(label="Preço", width=400)
+    estoqueRequired = ft.Dropdown(label="Estoque Importa?", options=[
+        ft.dropdown.Option("Sim"),
+        ft.dropdown.Option("Nao")
+    ])
     barcode=ft.TextField(label="barcode Scanneado")
     select_button = ft.ElevatedButton(text="Selecionar Foto", on_click=lambda _: file_picker.pick_files(allow_multiple=False))
     estoque = ft.TextField(label="estoque", multiline=True, width=400,)
@@ -2007,6 +2076,10 @@ def main(page: ft.Page):
     e_preco_input = ft.TextField(label="Preço", width=400)
     e_barcode_input=ft.TextField(label="Barcode Scanneado")
     e_estoque = ft.TextField(label="Estoque", multiline=True, width=400,)
+    e_estoqueRequired = ft.Dropdown(label="Estoque Importa?", options=[
+        ft.dropdown.Option("Sim"),
+        ft.dropdown.Option("Nao")
+    ])
 
     
     def cancel_dlg(event):
@@ -2045,6 +2118,8 @@ def main(page: ft.Page):
             pass
         else:
             pdt.image=filename
+        if e_estoqueRequired.value !=None or e_estoqueRequired.value !="":
+            pdt.estoquerequired=e_estoqueRequired.value
         selected_file_path=None
         AtualisarProduto(int(e.control.key),pdt)
         dlg_edit.open=False
@@ -2070,7 +2145,7 @@ def main(page: ft.Page):
         except Exception as ex:
             status_text.value = f"Erro ao copiar a foto: {ex}"
         page.update()
-        CadastrarProduto(nome_input.value,barcode.value, categoria.value,preco_input.value, estoque.value, filename)
+        CadastrarProduto(nome_input.value,barcode.value, categoria.value,preco_input.value,estoqueRequired.value, estoque.value, filename)
         dlg.open=False
         page.update()
         update_menu()
@@ -2085,6 +2160,7 @@ def main(page: ft.Page):
             barcode,
             preco_input,
             categoria,
+            estoqueRequired,
             estoque,
             select_button,
             status_text
@@ -2199,8 +2275,8 @@ def main(page: ft.Page):
                                                      clientes,mesa
                                                     ]),)),
                     ft.Stack(width=260,height=650,controls=[
-                    lista_vendas,
-                    ft.Card(width=240,
+                    ft.Container(content=lista_vendas,scale=0.8),
+                    ft.Card(width=235,
                             bottom=260,
                             content=ft.Container(padding=10,content=ft.Column(controls=[
                                 total_text
