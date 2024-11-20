@@ -1,12 +1,13 @@
 import sqlalchemy
 from sqlalchemy.orm import sessionmaker
-from models.modelos import Base,Produto,Usuario,ProdutoVenda,RelatorioVenda,ContasAbertas,ProdutosConta
+from models.modelos import Base,Produto,Usuario,ProdutoVenda,RelatorioVenda,ContasAbertas,ProdutosConta,SaidaEstoque,EntradaEstoque,RelatorioEstoque
 from datetime import datetime
 import re
 import json
 import os
 from sqlalchemy import or_,asc,desc
 from sqlalchemy.sql import func
+from collections import defaultdict
 
 
 info= {
@@ -105,14 +106,17 @@ def CadastrarUsuario(n,c,u,s_):
     db.commit()
     print(f"O usuario {n} Foi Cadastrado com sucesso")
 
-def CadastrarProduto(titulo,barcode,categoria, preco,estoquerequired, estoque, image):
+def CadastrarProduto(titulo,barcode,categoria, preco, estoque, image,relatorio_id):
     if titulo != "" and preco is not None and estoque != "" and image != "":
-        novoProduto = Produto(titulo=titulo,barcode=barcode,categoria=categoria, preco=preco,estoquerequired=estoquerequired,estoque=estoque, image=image)
-        db.add(novoProduto)
+        produto = Produto(titulo=titulo,barcode=barcode,categoria=categoria, preco=preco,estoque=estoque, image=image)
+        db.add(produto)
+        db.commit()
+        produto=db.query(Produto).filter_by(titulo=titulo,estoque=estoque,preco=preco).first()
+        entrada=EntradaEstoque(nome=produto.titulo,produto_id=produto.id,quantidade=estoque,relatorio_id=relatorio_id)
+        db.add(entrada)
         db.commit()
         print(f"O Produto {titulo} foi cadastrado com sucesso")
     else:
-
         print("Complete todos os campos")
 
 def AtualisarProduto(id,data):
@@ -211,22 +215,25 @@ def getContas():
     except:
         return [] 
     
-def incrementarStoque(id_produto,qtd):
+def incrementarStoque(id_produto,qtd,relatorio_id):
     produto=db.query(Produto).filter_by(id=id_produto).first()
     if(produto):
         p=produto.estoque
         produto.estoque=produto.estoque+qtd
+        entrada=EntradaEstoque(nome=produto.titulo,produto_id=produto.id,quantidade=qtd,relatorio_id=relatorio_id)
+        db.add(entrada)
         db.commit()
-        print(f"Estoque atualizado d {p} para {produto.estoque}")
+        return f"Estoque atualizado de {p} para {produto.estoque}"
     else:
-        print("O produto nao foi encontrado")
-def decrementarStoque(id_produto,qtd):
+        return f"O estoque atual e menor que \n a quantidade inserida"
+def decrementarStoque(id_produto,qtd,relatorio_id):
     produto=db.query(Produto).filter_by(id=id_produto).first()
-    print(id_produto)
     if(produto):
         p=produto.estoque
         if produto.estoque>=qtd:
             produto.estoque=produto.estoque-qtd
+            saida=SaidaEstoque(nome=produto.titulo,produto_id=produto.id,quantidade=qtd,relatorio_id=relatorio_id)
+            db.add(saida)
             db.commit()
             return f"Estoque atualizado de {p} para {produto.estoque}"
         else:
@@ -234,13 +241,12 @@ def decrementarStoque(id_produto,qtd):
     else:
         print("O produto nao foi encontrado")
         
-def deduceStockCart(carrinho):
+def deduceStockCart(carrinho,relatorio_id):
     for i in carrinho:
         #achar o produto no banco
         produto=db.query(Produto).filter_by(titulo=i['nome']).first()
         #reduzir o estoque com a funcao abaixo, para cada item
-        if i['estoquerequired']!="Nao":
-            decrementarStoque(produto.id,i['quantidade'])
+        decrementarStoque(produto.id,i['quantidade'],relatorio_id)
 
 def checkCartStock(carrinho):
     #ir no banco verificar se o estoque e suficiente para a venda
@@ -249,9 +255,7 @@ def checkCartStock(carrinho):
         produto=db.query(Produto).filter_by(titulo=i['nome']).first()
         #print(produto.estoque)
         #se o produto.estoque for maior que quantidade de item retorna True
-        if produto.estoquerequired=="Nao":
-            return {"msg":"O estoque e suficiente","resultado":True}
-        if produto.estoque>i['quantidade']:
+        if produto.estoque>=i['quantidade']:
             print("estoque e suficiente")
             resultado={"msg":"O estoque e suficiente","resultado":True}
         else:
@@ -451,7 +455,7 @@ def formatar_dados(dados):
     linhas = []
     
     # Adiciona os dados formatados à lista
-    linhas.append("-------RESTAURANTE MUTXUTXU------")
+    linhas.append("-------JP INVEST------")
     linhas.append(f"Data: ")
     linhas.append("--------------------------")
     linhas.append("Produtos:")
@@ -465,7 +469,7 @@ def formatar_dados(dados):
     linhas.append(f"Subtotal: {dados['subtotal']:.2f} MT")
     linhas.append(f"IVA: {dados['iva']:.2f} MT")
     linhas.append(f"Total: {dados['total']:.2f} MT")
-    linhas.append("-------by--gulamo--devs-------")
+    linhas.append("-------BlueSpark MZ-------")
     
     # Junta todas as linhas em uma única string
     return "\n".join(linhas)
@@ -498,3 +502,121 @@ def calcular_totais_por_metodo(relatorio):
             totais_por_metodo[metodo] = total  # Adiciona novos métodos, caso apareçam
     
     return totais_por_metodo
+def garantir_inteiro(valor):
+    try:
+        return int(valor)
+    except (ValueError, TypeError):
+        return 20
+
+def calcular_quantidade_saida(estoque_inicial, estoque_final):
+    # Garante que os valores são inteiros, mesmo que sejam strings ou tipos inválidos
+    estoque_inicial = garantir_inteiro(estoque_inicial)
+    estoque_final = garantir_inteiro(estoque_final)
+
+    # Calcula a quantidade saída e garante que não seja negativa
+    quantidade_saida = estoque_inicial - estoque_final
+
+    return quantidade_saida
+
+def calcular_estoque_restante(estoque_inicial, quantidade_saida):
+    # Garante que estoque_inicial é um inteiro
+    estoque_inicial = garantir_inteiro(estoque_inicial)
+    
+    # Calcula o estoque restante e garante que não seja negativo
+    estoque_restante = estoque_inicial - quantidade_saida
+    if estoque_restante < 0:
+        estoque_restante = 0
+
+    return estoque_restante
+
+
+
+def getSaidas(relatorio_id): 
+    # Consulta para pegar todas as saídas relacionadas ao relatório
+    saidas = db.query(SaidaEstoque).filter_by(relatorio_id=relatorio_id).all()
+
+    # Usando um defaultdict para somar as quantidades por nome de produto
+    produtos_dict = defaultdict(int)
+
+    # Itera pelas saídas e acumula a quantidade por produto
+    for saida in saidas:
+        produtos_dict[saida.nome] += saida.quantidade
+
+    return produtos_dict
+
+def getEntradas(relatorio_id):
+    entradas=db.query(EntradaEstoque).filter_by(relatorio_id=relatorio_id).all()
+    produtos_dict = defaultdict(int)
+
+    # Itera pelas saídas e acumula a quantidade por produto
+    for entrada in entradas:
+        produtos_dict[entrada.nome] += entrada.quantidade
+
+    return produtos_dict
+
+def getHistoricoEstoque(relatorio_id):
+    """
+    Esta função retorna uma lista de produtos movimentados no estoque.
+    1. Acha todos os produtos.
+    2. Calcula entradas e saídas de cada produto.
+    3. Seleciona produtos que têm pelo menos uma entrada ou saída.
+    
+    Retorna uma lista no formato:
+    [{"nome": "coca", "estoque_inicial": 5, "entrada": 5, "saida": 6, "estoque_atual": 5},
+     {"nome": "fanta", "estoque_inicial": 2, "entrada": 5, "saida": 3, "estoque_atual": 5}]
+    """
+    produtos = db.query(Produto).all()
+    entradas = db.query(EntradaEstoque).filter_by(relatorio_id=relatorio_id).all()
+    saidas = db.query(SaidaEstoque).filter_by(relatorio_id=relatorio_id).all()
+
+    # Mapeia entradas e saídas por produto
+    entradas_por_produto = {}
+    for entrada in entradas:
+        entradas_por_produto[entrada.produto_id] = entradas_por_produto.get(entrada.produto_id, 0) + entrada.quantidade
+
+    saidas_por_produto = {}
+    for saida in saidas:
+        saidas_por_produto[saida.produto_id] = saidas_por_produto.get(saida.produto_id, 0) + saida.quantidade
+
+    # Lista para armazenar os dados do histórico
+    historico = []
+
+    # Calcula os dados para cada produto
+    for produto in produtos:
+        entrada = entradas_por_produto.get(produto.id, 0)
+        saida = saidas_por_produto.get(produto.id, 0)
+        
+        # Considera apenas produtos que têm movimentação
+        if entrada > 0 or saida > 0:
+            estoque_inicial = produto.estoque + saida - entrada
+            historico.append({
+                "nome": produto.titulo,
+                "estoque_inicial": estoque_inicial,
+                "entrada": entrada,
+                "saida": saida,
+                "estoque_atual": produto.estoque,
+            })
+
+    try:
+        # Verifica se o relatório já existe
+        relatorio = db.query(RelatorioEstoque).filter_by(relatorio_id=relatorio_id).first()
+        if relatorio:
+            relatorio.historico = historico  # Atualiza o histórico
+        else:
+            # Cria um novo relatório caso não exista
+            novo_relatorio = RelatorioEstoque(relatorio_id=relatorio_id, historico=historico)
+            db.add(novo_relatorio)
+        
+        db.commit()  # Salva as alterações no banco
+    except Exception as e:
+        db.rollback()  # Caso ocorra algum erro, desfaz as alterações
+        raise Exception(f"Erro ao salvar o relatório: {e}")
+
+    return historico
+
+def getRelatorioEstoque(relatorio_id):
+    relatorio = db.query(RelatorioEstoque).filter_by(relatorio_id=relatorio_id).first()
+    if relatorio:
+        return relatorio.historico
+    else:
+        return []  # Se não encontrar o relatório, retorna uma lista vazia

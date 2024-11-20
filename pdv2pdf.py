@@ -6,7 +6,7 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Table, TableStyle
 from datetime import datetime
 from random import randint
 import json
-from controler import calcular_totais_por_metodo
+from controler import calcular_totais_por_metodo,getHistoricoEstoque
 
 def gerar_pdf(dados):
     # Nome do arquivo PDF
@@ -65,8 +65,7 @@ def gerar_pdf(dados):
     # Abrir o PDF após gerar
     os.startfile(os.path.join(pdf_path, nome_pdf))
     print(f"PDF {nome_pdf} gerado e aberto com sucesso.")
-
-def gerar_relatorio_pdf(dados):
+def gerar_relatorio_pdf(dados, relatorio_id):
     """
     Esta função gera o relatório diário de vendas e o histórico de estoque.
     """
@@ -95,46 +94,33 @@ def gerar_relatorio_pdf(dados):
         data_vendas = [['Horas', 'Produtos', 'Quantidade', 'Total', 'Cliente/Mesa', 'Caixa', 'Método']]
         
         for venda in dados['vendas']:
-            data_vendas.append([
-                str(venda['hora']),
-                str(venda['produto_total']),
-                venda['quantidade'],
-                f"{venda['total']} MZN",
-                str(venda['cliente']),
-                str(venda['caixa']),
-                str(venda['metodo'])
-            ])
+            data_vendas.append([str(venda['hora']),
+                                str(venda['produto_total']),
+                                venda['quantidade'],
+                                f"{venda['total']} MZN",
+                                str(venda['cliente']),
+                                str(venda['caixa']),
+                                str(venda['metodo'])])
         
         # Criando a tabela de vendas
         table_vendas = Table(data_vendas)
-        table_vendas.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
-            ('GRID', (0, 0), (-1, -1), 1, colors.black)
-        ]))
-        
+        table_vendas.setStyle(TableStyle([('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                                          ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                                          ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                                          ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                                          ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                                          ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                                          ('GRID', (0, 0), (-1, -1), 1, colors.black)]))
         content.append(table_vendas)
         
     else:
         content.append(Paragraph("Nenhuma venda registrada.", styles['Normal']))
 
-   # Lista de todos os métodos de pagamento
+    # Lista de todos os métodos de pagamento
     metodos_pagamento = [
-        "Cash",
-        "MPesa",
-        "E-mola",
-        "Paga Facil",
-        "Ponto 24",
-        "POS BIM",
-        "POS BCI",
-        "POS ABSA",
-        "POS MOZA BANCO",
-        "POS StanderBank",
-        "M-Cash"
+        "Cash", "MPesa", "E-mola", "Paga Facil", "Ponto 24", 
+        "POS BIM", "POS BCI", "POS ABSA", "POS MOZA BANCO", 
+        "POS StanderBank", "M-Cash"
     ]
 
     # Totais de vendas
@@ -150,55 +136,36 @@ def gerar_relatorio_pdf(dados):
     # Tabela de histórico de estoque
     content.append(Paragraph("Histórico de Estoque:", styles['Title']))
     
-    data_estoque = [['Produto', 'Estoque Inicial', 'Saída', 'Restante']]
+    # Tabela de dados de estoque
+    data_estoque = [['Produto', 'Estoque Inicial', 'Entrada', 'Saída', 'Estoque Atual']]
     
-    # Verifica se 'entrada' está definida e é uma lista
-    entrada = dados.get('entrada', [])
-    if not isinstance(entrada, list):
-        entrada = json.loads(entrada)
+    # Obtendo o histórico de estoque
+    historico = getHistoricoEstoque(relatorio_id)
     
-    # Verifica se 'saida' está definida e é uma lista
-    saida = dados.get('saida', [])
-    if saida and not isinstance(saida, list):
-        saida = json.loads(saida)
-    
-    # Gerar o dicionário de saídas por produto
-    saida_dict = {s['nome']: s['quantidade_saida'] for s in saida} if saida else {}
-    
-    # Preenchendo a tabela com os dados de estoque
-    for item in entrada:
-        nome = item['nome']
-        estoque_inicial = item['estoque']
-        quantidade_saida = saida_dict.get(nome, 0)
-        estoque_restante = estoque_inicial - quantidade_saida
-        if quantidade_saida>0:
-            data_estoque.append([
-            nome,
-            estoque_inicial,  # Estoque Inicial
-            quantidade_saida,  # Saída
-            estoque_restante  # Restante
-        ])
-    
-    # Criando a tabela de estoque
+    for item in historico:
+        data_estoque.append([item['nome'],
+                             str(item['estoque_inicial']),
+                             str(item['entrada']),
+                             str(item['saida']),
+                             str(item['estoque_atual'])])
+
+    # Criando a tabela de histórico de estoque
     table_estoque = Table(data_estoque)
-    table_estoque.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-        ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
-        ('GRID', (0, 0), (-1, -1), 1, colors.black)
-    ]))
-    
+    table_estoque.setStyle(TableStyle([('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                                       ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                                       ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                                       ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                                       ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                                       ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                                       ('GRID', (0, 0), (-1, -1), 1, colors.black)]))
     content.append(table_estoque)
-    
+
     # Gerando o PDF
-    doc.build(content)
-    
-    # Abrir o PDF após gerar
-    os.startfile(os.path.join(pdf_path, nome_pdf))
-    print(f"PDF {nome_pdf} gerado e aberto com sucesso.")
+    doc.build(content)  
+    os.startfile(os.path.join(pdf_path, nome_pdf))  
+    return True
+
+
 
 
 def gerar_pdf_produtos(produtos):
@@ -218,14 +185,18 @@ def gerar_pdf_produtos(produtos):
     content.append(Paragraph(f"Data: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", styles['Normal']))
     
     # Tabela de produtos
-    data = [['ID', 'Nome', 'Preço', 'Estoque']]
-    
+    data = [['#','Nome', 'Preço', 'Estoque','Categoria']]
+    id=0
     for produto in produtos:
+        id+=1
+
         data.append([
-            produto.id,
+            id,
             produto.titulo,
             f"MZN {produto.preco:.2f}",
-            produto.estoque
+            produto.estoque,
+            produto.categoria
+            
         ])
     
     # Criando a tabela
@@ -233,7 +204,6 @@ def gerar_pdf_produtos(produtos):
     table.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
         ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
         ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
         ('BACKGROUND', (0, 1), (-1, -1), colors.beige),

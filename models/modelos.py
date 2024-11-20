@@ -19,16 +19,40 @@ class Produto(Base):
     titulo = Column(String(100))
     preco = Column(Float)
     barcode=Column(String(30))
-    estoquerequired=Column(String(10),default="Sim")
     estoque = Column(Integer)
     image=Column(String(100))
     quantidade_venda=Column(Integer)
     categoria=Column(String(50))
 
+class EntradaEstoque(Base):
+    __tablename__ = "entradas_estoque"
+    id = Column(Integer, primary_key=True)
+    nome=Column(String(50),nullable=True)
+    produto_id = Column(Integer, ForeignKey('produtos.id'), nullable=False)
+    quantidade = Column(Integer, nullable=False)
+    data_entrada = Column(DateTime, default=datetime.now)
+    # Relacionamento com o Produto
+    produto = relationship("Produto", backref="entradas", cascade="all, delete")
+    relatorio_id = Column(Integer, ForeignKey("relatorios.id"), nullable=True)
 
 
     
+# Tabela de Saída no Estoque
+class SaidaEstoque(Base):
+    __tablename__ = "saidas_estoque"
+    id = Column(Integer, primary_key=True)
+    nome=Column(String(50))
+    produto_id = Column(Integer, ForeignKey('produtos.id'), nullable=False)
+    quantidade = Column(Integer, nullable=False)
+    data_saida = Column(DateTime, default=datetime.now)
+    # Relacionamento com o Produto
+    produto = relationship("Produto", backref="saidas", cascade="all, delete")
+    relatorio_id = Column(Integer, ForeignKey("relatorios.id"), nullable=True)
 
+
+
+
+    
 class RelatorioVenda(Base):
     __tablename__="relatorios"
     id=Column(Integer,primary_key=True)
@@ -38,7 +62,9 @@ class RelatorioVenda(Base):
     vendas=relationship("ProdutoVenda", backref="relatorios")
     funcionario=Column(String(40))
     entrada = Column(JSON)
-    saida = Column(JSON,nullable=True) 
+    saida = Column(JSON,nullable=True)
+    entrada_estoque = relationship("EntradaEstoque", backref="relatorio")
+    saida_estoque = relationship("SaidaEstoque", backref="relatorio")
 
 class ProdutoVenda(Base):
     __tablename__="vendas"
@@ -74,5 +100,10 @@ class ContasAbertas(Base):
     # Relacionamento com ProdutosConta (um para muitos)
     produtos = relationship("ProdutosConta", back_populates="conta", cascade="all, delete")
 
+class RelatorioEstoque(Base):
+    __tablename__ = 'relatorio_estoque'
 
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    relatorio_id = Column(Integer, nullable=False, unique=True)  # ID único para o relatório
+    historico = Column(JSON, nullable=False)  # Coluna para armazenar a lista completa como JSON
     
