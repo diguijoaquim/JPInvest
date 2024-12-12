@@ -1,2 +1,2 @@
 from controler import *
-print(getRelatorioEstoque(1))
+print(ContaInfo(1))

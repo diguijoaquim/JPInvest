@@ -77,7 +77,7 @@ class ProdutoVenda(Base):
     relatorio_id=Column(Integer, ForeignKey("relatorios.id"))
     cliente=Column(String(50))
     funcionario=Column(String(40))
-    metodo=Column(String(40))
+    metodo=Column(JSON)
 
 class ProdutosConta(Base):
     __tablename__ = "produtos_conta"

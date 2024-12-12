@@ -70,6 +70,7 @@ def gerar_relatorio_pdf(dados, relatorio_id):
     Esta função gera o relatório diário de vendas e o histórico de estoque.
     """
     total_por_metodo = calcular_totais_por_metodo(dados)
+  
     
     # Nome do arquivo PDF
     nome_pdf = f"relatorio_{dados['nome']+str(randint(0,10))}.pdf"
@@ -94,14 +95,20 @@ def gerar_relatorio_pdf(dados, relatorio_id):
         data_vendas = [['Horas', 'Produtos', 'Quantidade', 'Total', 'Cliente/Mesa', 'Caixa', 'Método']]
         
         for venda in dados['vendas']:
-            data_vendas.append([str(venda['hora']),
-                                str(venda['produto_total']),
-                                venda['quantidade'],
-                                f"{venda['total']} MZN",
-                                str(venda['cliente']),
-                                str(venda['caixa']),
-                                str(venda['metodo'])])
-        
+            # Formatar os métodos de pagamento como uma string separada por vírgulas
+            metodos_formatados = ', '.join(
+                metodo['metodo'] for metodo in venda['metodo'] if metodo.get('metodo')
+            )
+            
+            data_vendas.append([
+                str(venda['hora']),
+                str(venda['produto_total']),
+                venda['quantidade'],
+                f"{venda['total']} MZN",
+                str(venda['cliente']),
+                str(venda['caixa']),
+                metodos_formatados  # Adicionar a string formatada
+            ])
         # Criando a tabela de vendas
         table_vendas = Table(data_vendas)
         table_vendas.setStyle(TableStyle([('BACKGROUND', (0, 0), (-1, 0), colors.grey),

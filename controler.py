@@ -8,6 +8,7 @@ import os
 from sqlalchemy import or_,asc,desc
 from sqlalchemy.sql import func
 from collections import defaultdict
+import sqlite3
 
 
 info= {
@@ -161,10 +162,8 @@ def ContaInfoToVenda(id=1):
     bb=banco()
     
     pedidos = bb.query(ProdutosConta).filter_by(conta_id=id).all()
-    
     # Converte a lista de pedidos em dicionários
     pedidos_json = [pedido.__dict__ for pedido in pedidos]
-    
     # Calcule os totais diretamente dos pedidos
     return pedidos_json
    
@@ -489,19 +488,32 @@ def calcular_totais_por_metodo(relatorio):
         'POS StanderBank': 0.0,
         'M-Cash': 0.0
     }
-    
+
     # Iterar sobre as vendas no relatório
     for venda in relatorio['vendas']:
-        metodo = venda['metodo']
-        total = float(venda['total'].replace(',', '.'))  # Converter o total para numérico
-        
-        # Somar o total para o método de pagamento existente
-        if metodo in totais_por_metodo:
-            totais_por_metodo[metodo] += total
-        else:
-            totais_por_metodo[metodo] = total  # Adiciona novos métodos, caso apareçam
-    
+        # Iterar sobre os métodos de pagamento da venda
+        for metodo in venda['metodo']:
+            nome_metodo = metodo['metodo']  # Nome do método de pagamento
+            valor = metodo['valor']
+            
+            # Certificar-se de que o valor é um float
+            if isinstance(valor, str):
+                valor_metodo = float(valor.replace(',', '.'))  # Valor pago, convertido para float
+            elif isinstance(valor, (int, float)):
+                valor_metodo = float(valor)
+            else:
+                raise ValueError(f"Formato inválido para o valor: {valor}")
+            
+            # Somar o total para o método de pagamento existente
+            if nome_metodo in totais_por_metodo:
+                totais_por_metodo[nome_metodo] += valor_metodo
+            else:
+                # Caso um método de pagamento novo apareça, adicioná-lo ao dicionário
+                totais_por_metodo[nome_metodo] = valor_metodo
+
     return totais_por_metodo
+
+
 def garantir_inteiro(valor):
     try:
         return int(valor)
@@ -620,3 +632,47 @@ def getRelatorioEstoque(relatorio_id):
         return relatorio.historico
     else:
         return []  # Se não encontrar o relatório, retorna uma lista vazia
+from sqlalchemy import create_engine, exc
+from sqlalchemy.orm import sessionmaker
+from models.modelos import Produto 
+
+def carregarProdutos(caminho_origem):
+    # Conectar ao banco de origem com sqlite3
+    conn_origem = sqlite3.connect(caminho_origem)
+    cursor_origem = conn_origem.cursor()
+
+    # Obter todos os dados da tabela de origem
+    cursor_origem.execute("SELECT * FROM produtos")
+    produtos = cursor_origem.fetchall()
+
+    # Configurar conexão com o banco de destino usando SQLAlchemy
+    engine = create_engine(f'sqlite:///{db_path}')  # Substitua pelo caminho correto
+    Session = sessionmaker(bind=engine)
+    session = Session()
+
+    try:
+        for produto in produtos:
+            # Mapear os campos corretamente com base no esquema
+            novo_produto = Produto(
+                id=produto[0],
+                titulo=produto[1],
+                preco=produto[2],
+                barcode=produto[3],
+                estoque=produto[4],
+                image=produto[5],
+                quantidade_venda=produto[6],
+                categoria=produto[7]
+            )
+            # Adicionar ao banco de destino
+            session.merge(novo_produto)  # `merge` evita duplicatas com base na chave primária
+
+        # Salvar alterações no banco de destino
+        session.commit()
+        return f"{len(produtos)} produtos foram carregados para o banco de destino!"
+    except exc.SQLAlchemyError as e:
+        session.rollback()
+        return f"Erro ao carregar produtos: {e}"   
+    finally:
+        # Fechar conexões
+        session.close()
+        conn_origem.close()

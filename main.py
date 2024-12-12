@@ -12,6 +12,23 @@ from time import sleep
 from contasToVenda import Venda
 from controler import ContaInfoToVenda
 from sqlalchemy import asc
+import threading
+import asyncio
+import json
+
+lock = threading.Lock()
+
+def page_update_modern(page):
+    if lock.acquire(blocking=False):  # Tenta adquirir o lock sem bloquear
+        try:
+            # Atualiza a página
+            page.update()
+        except Exception as e:
+            print(f"Erro ao atualizar a página: {e}")  # Captura e exibe o erro
+        finally:
+            lock.release()  # Libera o lock no final
+    else:
+        print("Tentativa de atualização falhou, lock já adquirido.")
 
 
 
@@ -35,6 +52,61 @@ def abrir_gaveta(printer_name="XP-80C", comando=b'\x1b\x70\x00\x19\xfa'):
     except Exception as e:
         logging.error(f"Erro ao abrir a gaveta: {e}")
         return False, "Erro", f"Erro ao abrir a gaveta: {e}"
+    finally:
+        win32print.ClosePrinter(hPrinter)
+def print_conta(dados,printer_name="XP-80C"):
+    try:
+        hPrinter = win32print.OpenPrinter(printer_name)
+        hJob = win32print.StartDocPrinter(hPrinter, 1, ("Receipt", None, "RAW"))
+        win32print.StartPagePrinter(hPrinter)
+        
+
+        esc_pos_commands = b'\x1b\x40'  # Inicia o documento (ESC @)
+        esc_pos_commands += b'\x1b\x45\x01'  # Habilita negrito
+        esc_pos_commands += b'JP INVEST, LTD!\n'
+        esc_pos_commands += b'\x1b\x45\x00'  # Desabilita negrito
+        esc_pos_commands += f'Data: {dados['data']}\n'.encode('utf-8')
+        esc_pos_commands += b'----------------------------------------------\n'
+
+        esc_pos_commands += b"Qnt   Nome   Total\n"
+        esc_pos_commands += b'----------------------------------------------\n'
+        for produto in dados['produtos']:
+            esc_pos_commands += f"{produto['quantidade']}x {produto['nome']} - {produto['total']:.2f} MZN\n".encode('utf-8')
+        esc_pos_commands += b'\x1b\x45\x01'  # Habilita negrito
+        esc_pos_commands += f'TOTAL SAO {dados["total"]:.2f} MZN\n'.encode('utf-8')
+        esc_pos_commands += b'\x1b\x45\x00'  # Desabilita negrito
+        esc_pos_commands += b'---\n'
+        esc_pos_commands += f'Subtotal: {dados["subtotal"]:.2f} MZN\n'.encode('utf-8')
+        esc_pos_commands += f'Taxa de IVA: {dados["iva"]:.2f} MZN\n'.encode('utf-8')
+        esc_pos_commands += f'Total : {dados["total"]:.2f} MZN\n'.encode('utf-8')
+        esc_pos_commands += b'------------------------------------------------\n'
+        esc_pos_commands += f"Metode de Pagamento: {dados['metodo']}\n".encode('utf-8')
+        esc_pos_commands += f'Valor Entrege : {dados["entregue"]}\n'.encode('utf-8')
+        if int(dados['troco'])>0:
+            esc_pos_commands += f'Troco : {dados["troco"]:.2f}\n'.encode('utf-8')
+        esc_pos_commands += b'-----------------------------------------------\n'
+        esc_pos_commands += f'Cliente/Mesa: {dados['cliente']}\n'.encode('utf-8')
+        esc_pos_commands += b'-----------------Volte-Sempre-------------------\n'
+        esc_pos_commands += b'from electrogulamo - sistemas\n'
+
+        esc_pos_commands += b'\x1b\x64\x02'
+        esc_pos_commands += b'\x1d\x56\x41\x00'
+        if dados['metodo'] =='Cash':
+            print('cash')
+            abrir_gaveta()
+
+        
+
+        win32print.WritePrinter(hPrinter, esc_pos_commands)
+
+        win32print.EndPagePrinter(hPrinter)
+        win32print.EndDocPrinter(hPrinter)
+        logging.info("Recibo impresso com sucesso.")
+        
+        return True, "Sucesso", "Recibo impresso com sucesso."
+    except Exception as e:
+        logging.error(f"Erro ao imprimir recibo: {e}")
+        return False, "Erro", f"Erro ao imprimir recibo: {e}"
     finally:
         win32print.ClosePrinter(hPrinter)
 
@@ -71,7 +143,7 @@ def print_receipt(dados, printer_name="XP-80C"):
         esc_pos_commands += b'-----------------------------------------------\n'
         esc_pos_commands += f'Cliente/Mesa: {dados['cliente']}\n'.encode('utf-8')
         esc_pos_commands += b'-----------------Volte-Sempre-------------------\n'
-        esc_pos_commands += b'From BlueSpark MZ - sistemas\n'
+        esc_pos_commands += b'from electrogulamo - sistemas\n'
 
         esc_pos_commands += b'\x1b\x64\x02'
         esc_pos_commands += b'\x1d\x56\x41\x00'
@@ -106,6 +178,7 @@ hora=""
 data_view="00-00-0000"
 vendas_view=0
 total_view=0.00
+selected_account=False
 iva_p = 0.16
 total_valor=0
 codigo_barras=''
@@ -135,7 +208,7 @@ def main(page: ft.Page):
     page.padding=0
     page.window.full_screen=True
     altura=page.window.height+150
-    global hora,banco,selected_item_id
+    global hora,banco,selected_item_id,selected_account
     def CheckIsLoged():
         return page.client_storage.get("loged")
     
@@ -157,7 +230,7 @@ def main(page: ft.Page):
                                 ft.Text("Horas:",size=15),
                                 ft.Text(hora,size=15),    
                             ])
-        page.update()
+        page_update_modern(page)
 
     categoria_lista = [
         "Todos os Produtos",
@@ -195,23 +268,29 @@ def main(page: ft.Page):
     estoqueBody=ft.Container()
 
     def Entradas(e):
-        entradas=getEntradas(getRelatorioUnico(day).id)
-        content=ft.Column(height=500)
-        for nome, quantidade in entradas.items():
-            content.controls.append(ft.Text(f"{nome}---{quantidade}"))
+        try:
+            entradas=getEntradas(getRelatorioUnico(day).id)
+            content=ft.Column(height=500)
+            for nome, quantidade in entradas.items():
+                content.controls.append(ft.Text(f"{nome}---{quantidade}"))
 
-        entrada_dialog=ft.AlertDialog(title=ft.Text('Entradas'),content=content)
-        entrada_dialog.actions=[ft.ElevatedButton("fechar",on_click=lambda e: page.close(entrada_dialog))]
-        page.open(entrada_dialog)
+            entrada_dialog=ft.AlertDialog(title=ft.Text('Entradas'),content=content)
+            entrada_dialog.actions=[ft.ElevatedButton("fechar",on_click=lambda e: page.close(entrada_dialog))]
+            page.open(entrada_dialog)
+        except:
+            pass
     def Saidas(e):
-        saidas=getSaidas(getRelatorioUnico(day).id)
-        content=ft.Column(height=500)
-        for nome, quantidade in saidas.items():
-            content.controls.append(ft.Text(f"{nome}---{quantidade}"))
-            saida_dialog=ft.AlertDialog(title=ft.Text('Saidas'),content=content,actions=[
-            ft.ElevatedButton("fechar",bgcolor=ft.colors.RED_400)])
-            saida_dialog.actions=[ft.ElevatedButton("fechar",on_click=lambda e: page.close(saida_dialog))]
-        page.open(saida_dialog)
+        try:
+            saidas=getSaidas(getRelatorioUnico(day).id)
+            content=ft.Column(height=500)
+            for nome, quantidade in saidas.items():
+                content.controls.append(ft.Text(f"{nome}---{quantidade}"))
+                saida_dialog=ft.AlertDialog(title=ft.Text('Saidas'),content=content,actions=[
+                ft.ElevatedButton("fechar",bgcolor=ft.colors.RED_400)])
+                saida_dialog.actions=[ft.ElevatedButton("fechar",on_click=lambda e: page.close(saida_dialog))]
+            page.open(saida_dialog)
+        except:
+            pass
     def updateEstoquePage():
         historico=ft.DataTable(
             columns=[
@@ -221,16 +300,19 @@ def main(page: ft.Page):
                 ft.DataColumn(ft.Text("saidas"), numeric=True),
                 ft.DataColumn(ft.Text("Estoque Atual"), numeric=True),
             ],height=altura-100)
-        for estoque in getHistoricoEstoque(getRelatorioUnico(day).id):
-            historico.rows.append(
-                ft.DataRow(cells=[
-                    ft.DataCell(ft.Text(estoque['nome'])),
-                    ft.DataCell(ft.Text(estoque['estoque_inicial'])),
-                    ft.DataCell(ft.Text(estoque['entrada'])),
-                    ft.DataCell(ft.Text(estoque['saida'])),
-                    ft.DataCell(ft.Text(estoque['estoque_atual']))
-                    ])
-            )
+        try:
+            for estoque in getHistoricoEstoque(getRelatorioUnico(day).id):
+                historico.rows.append(
+                    ft.DataRow(cells=[
+                        ft.DataCell(ft.Text(estoque['nome'])),
+                        ft.DataCell(ft.Text(estoque['estoque_inicial'])),
+                        ft.DataCell(ft.Text(estoque['entrada'])),
+                        ft.DataCell(ft.Text(estoque['saida'])),
+                        ft.DataCell(ft.Text(estoque['estoque_atual']))
+                        ])
+                )
+        except:
+            pass
         card_historico=ft.Container(padding=10,content=ft.Column([
             ft.Row([
                 ft.CupertinoButton("Ver Entradas",bgcolor=ft.colors.ORANGE_600,on_click=Entradas),
@@ -239,7 +321,8 @@ def main(page: ft.Page):
         ]))
         estoqueBody.content=card_historico
         body.content=estoqueBody
-        page.update()
+        page_update_modern(page)
+        
         
     def chage_nav(e):
         selected_index=e.control.selected_index
@@ -291,15 +374,15 @@ def main(page: ft.Page):
              
                     ],)]))
             update_menu()
-            page.update()
+            page_update_modern(page)
         elif selected_index == 1:
             body.content = relatoriosBody
             relatorio_update()
-            page.update()
+            page_update_modern(page)
         elif selected_index == 2:
+            body.content = ft.Container(expand=True,content=ft.Row([ft.ProgressRing()],height=page.window.height,alignment=ft.MainAxisAlignment.CENTER))
+            page_update_modern(page)
             update_produtos()
-
-
             produtos_table_itens.content=ft.Card(content=ft.Container(expand=True,padding=10,
                      content=ft.ResponsiveRow(controls=[
                         ft.Column(controls=[
@@ -311,7 +394,7 @@ def main(page: ft.Page):
             
             
             body.content = produtoBody
-            page.update()
+            page_update_modern(page)
         elif selected_index == 3:
             updateEstoquePage()
             
@@ -362,7 +445,7 @@ def main(page: ft.Page):
                     ft.Icon(ft.icons.INFO,color=ft.colors.RED_600),
                     ft.Text("Nao tens Permicao para acessar nas difinicoes")
                 ])))
-            page.update()
+            page_update_modern(page)
             
 
         else:
@@ -396,7 +479,7 @@ def main(page: ft.Page):
         else:
             selected_file_path = None
             status_text.value = "Nenhum arquivo selecionado"
-        page.update()
+        page_update_modern(page)
 
     status_text = ft.Text()
     file_picker = ft.FilePicker(on_result=file_picker_result)
@@ -455,7 +538,7 @@ def main(page: ft.Page):
                                     ]))
                 
                         ],)]))
-            page.update()
+            page_update_modern(page)
             update_menu()
             
                 
@@ -476,7 +559,7 @@ def main(page: ft.Page):
                 page.client_storage.set("user",serialize_user(result))
 
             page.controls.clear()
-            page.update()
+            page_update_modern(page)
             page.add(
             ft.Row(
                 [
@@ -490,7 +573,7 @@ def main(page: ft.Page):
             
         usname.value=""
         uspass.value=""
-        page.update()
+        page_update_modern(page)
 
     header=ft.Row(
         [ft.Container(content=ft.Text(info['app'],weight='bold',size=50,color=ft.colors.RED_500),padding=ft.Padding(0,100,0,0))]
@@ -501,7 +584,7 @@ def main(page: ft.Page):
             e.control.bgcolor='#fcf9d9'
         else: 
             e.control.bgcolor='#fefce8'
-        page.update()
+        page_update_modern(page)
     perfiles=ft.Row(alignment=ft.MainAxisAlignment.CENTER)
 
     def enter(e):
@@ -513,7 +596,7 @@ def main(page: ft.Page):
         
         card.content=login_perfil
         login_perfil.offset = ft.transform.Offset(0, 0)
-        page.update()
+        page_update_modern(page)
 
     choice_perfil=ft.Column(
         [ft.Row([ft.Text("Escolha o seu perfil")]),
@@ -522,7 +605,7 @@ def main(page: ft.Page):
         ])
     def clear(e):
         login_input.value=''
-        page.update()
+        page_update_modern(page)
 
     def write(e):
         if(e.control.text!='<'):
@@ -533,10 +616,10 @@ def main(page: ft.Page):
             holdtext=login_input.value
             login_input.value = holdtext[:-1]
             
-        page.update()
+        page_update_modern(page)
     
     def write_payment(e):
-        global total_valor
+        global total_valor,recebido1,recebido2
 
         troco=0
         if valor_pagar.disabled:
@@ -549,76 +632,159 @@ def main(page: ft.Page):
             else:
                 holdtext=valor_pagar.value
                 valor_pagar.value = holdtext[:-1]
+            try:
+                recebido1=int(valor_pagar.value)
+            except:
+                recebido1=0
 
-            recebido=valor_pagar.value
+            try:
+                recebido2=int(valor_pagar2.value)
+            except:
+                recebido2=0
+
+            recebido=recebido1+recebido2
             total = getTotalMoneyCart(carrinho_s)  
             total_valor=total
             iva = round(total * iva_p)  
             subtotal = subtotal = round(total - iva, 2)
             try:
-                if int(recebido)>total:
-                    troco=int(recebido)-total
+                if recebido>total:
+                    troco=recebido-total
                     trocoView.value=f"O troco e de: {troco},00 MT"
-                elif int(recebido)<total:
-                    resta=total-int(recebido)
+                elif recebido<total:
+                    resta=total-recebido
                     trocoView.value=f"falta: {resta},00 MT"
-                elif int(recebido)==total:
+                elif recebido==total:
                     trocoView.value=f"sem troco"
                 else:
                     trocoView.value=f"occoreu um erro"
             except:
                 print("input is not int")
             global ultima_venda
-            ultima_venda={
-                'data':f"{day} - {hora}",
-                'produtos':carrinho_s,
-                'subtotal':subtotal,
-                'iva':iva,
-                'total':total,
-                'cliente':f"{clientes.value} {mesa.value}",
-                'troco':troco,
-                'metodo':f"{pagamento.value}",
-                'entregue':f"{valor_pagar.value} "
+            p = [
+                    {"metodo": pagamento.value, "valor": recebido1},
+                    {"metodo": pagamento2.value, "valor": recebido2}
+                ]
+            ultima_venda = {
+                'data': f"{day} - {hora}",
+                'produtos': carrinho_s,
+                'subtotal': subtotal,
+                'iva': iva,
+                'total': total,
+                'cliente': f"{clientes.value} {mesa.value}",
+                'troco': troco,
+                'metodo': json.dumps(p),  # Serializa como JSON
+                'entregue': recebido
             }
             
-            page.update()
+            page_update_modern(page)
 
     def write_payment2(e):
-        global total_valor
+        global total_valor,recebido1,recebido2
         troco=0
+        recebido1=0
+        recebido2=0
 
-        recebido=valor_pagar.value
+        try:
+            recebido1=int(valor_pagar.value)
+        except:
+            recebido1=0
+
+        try:
+            recebido2=int(valor_pagar2.value)
+        except:
+            recebido2=0
+            
+
+        recebido=recebido1+recebido2
         total = getTotalMoneyCart(carrinho_s)  
         total_valor=total
         iva = round(total * iva_p)  
         subtotal = subtotal = round(total - iva, 2)
         try:
-            if int(recebido)>total:
-                troco=int(recebido)-total
+            if recebido>total:
+                troco=recebido-total
                 trocoView.value=f"O troco e de: {troco},00 MT"
-            elif int(recebido)<total:
-                resta=total-int(recebido)
+            elif recebido<total:
+                resta=total-recebido
                 trocoView.value=f"falta: {resta},00 MT"
-            elif int(recebido)==total:
+            elif recebido==total:
                 trocoView.value=f"sem troco"
             else:
                 trocoView.value=f"occoreu um erro"
         except:
             print("input is not int")
         global ultima_venda
-        ultima_venda={
-            'data':f"{day} - {hora}",
-            'produtos':carrinho_s,
-            'subtotal':subtotal,
-            'iva':iva,
-            'total':total,
-            'cliente':f"{clientes.value} {mesa.value}",
-            'troco':troco,
-            'metodo':f"{pagamento.value}",
-            'entregue':f"{valor_pagar.value} "
+        p = [
+                    {"metodo": pagamento.value, "valor": recebido1},
+                    {"metodo": pagamento2.value, "valor": recebido2}
+                ]
+        ultima_venda = {
+            'data': f"{day} - {hora}",
+            'produtos': carrinho_s,
+            'subtotal': subtotal,
+            'iva': iva,
+            'total': total,
+            'cliente': f"{clientes.value} {mesa.value}",
+            'troco': troco,
+            'metodo': json.dumps(p),  # Serializa como JSON
+            'entregue': recebido
         }
        
-        page.update()
+        page_update_modern(page)
+
+    def write_payment3(e):
+        global total_valor,recebido1,recebido2
+        troco=0
+        recebido1=0
+        recebido2=0
+
+        try:
+            recebido1=int(valor_pagar.value)
+        except:
+            recebido1=0
+
+        try:
+            recebido2=int(valor_pagar2.value)
+        except:
+            recebido2=0
+            
+
+        recebido=recebido1+recebido2
+        total = getTotalMoneyCart(carrinho_s)  
+        total_valor=total
+        iva = round(total * iva_p)  
+        subtotal = subtotal = round(total - iva, 2)
+        try:
+            if recebido>total:
+                troco=recebido-total
+                trocoView.value=f"O troco e de: {troco},00 MT"
+            elif recebido<total:
+                resta=total-recebido
+                trocoView.value=f"falta: {resta},00 MT"
+            elif recebido==total:
+                trocoView.value=f"sem troco"
+            else:
+                trocoView.value=f"occoreu um erro"
+        except:
+            print("input is not int")
+        global ultima_venda
+        p = [
+                    {"metodo": pagamento.value, "valor": recebido1},
+                    {"metodo": pagamento2.value, "valor": recebido2}
+                ]
+        ultima_venda = {
+            'data': f"{day} - {hora}",
+            'produtos': carrinho_s,
+            'subtotal': subtotal,
+            'iva': iva,
+            'total': total,
+            'cliente': f"{clientes.value} {mesa.value}",
+            'troco': troco,
+            'metodo': json.dumps(p),  # Serializa como JSON
+            'entregue': recebido
+        }
+        page_update_modern(page)
     keyboard=ft.Column([
         ft.Row([
         ft.ElevatedButton(text="1",on_click=write),
@@ -648,8 +814,59 @@ def main(page: ft.Page):
     def show_carrinho(e):
         carrinho_show.content=ft.Container(width=600,height=400,padding=10,content=lista_vendas)
         page.open(carrinho_show)
+
+    def verProdutosConta(e):
+        global ultima_venda,carrinho_s,total_valor,selected_account
+        id = e.control.key
+        nome_clinte=e.control.bgcolor
+        clientes.value=nome_clinte
+        selected_account=True
+        venda = Venda(ContaInfoToVenda(id), f"{day} - {hora}", f"{hora}",nome_clinte,"Dinheiro")
+        ultima_venda=venda.pedidos_para_venda()
+        carrinho_s=ultima_venda['produtos']
+        total_text.controls.clear()
+        total = getTotalMoneyCart(carrinho_s)  # Exemplo: 1000 MZN
+        total_valor=total
+
+        iva = total * 0.16  # 16% do total
+        subtotal = total - iva  # Subtotal é o total menos o IVA
+        total_text.controls.append(ft.Column(controls=[
+            ft.Text(f"Subtotal: {subtotal} MT", size=17),
+            ft.Text(f"IVA: {round(iva,2)} MT", size=17), 
+            ft.Text(f"Total: {total_valor} MT", size=17),
+            ft.Row(controls=[
+                ft.IconButton(icon=ft.icons.DELETE, on_click=limpar,icon_color="red"),
+                ft.IconButton(icon=ft.icons.LIST, on_click=addcontas,),
+                ft.IconButton(icon=ft.icons.CHECK, on_click=guardar),
+                ft.IconButton(icon=ft.icons.VISIBILITY, on_click=show_carrinho),
+                
+                
+            ])
+        ]))
+        lista_vendas.controls.clear()
+        for i, item in enumerate(carrinho_s):
+            lista_vendas.controls.append(ft.Container(
+                padding=8,
+                height=80,
+                content=ft.Card(content=ft.Row(
+                    controls=[
+                        ft.Image(src=f'{imagens}/{item['image']}', width=40, height=40, border_radius=8),
+                        ft.Text(item['nome']),
+                        ft.Row(controls=[ft.Text(f"{item['preco']} MT", size=8)]),
+                        ft.Text(f"Qtd: {item['quantidade']}"),  ft.PopupMenuButton(items=[
+                            ft.PopupMenuItem(text="diminuir",on_click=decrement_item, icon=item['id']),
+                            ft.PopupMenuItem(text="Deletar",on_click=delete_item, icon=i),
+
+                        ])
+                    ],
+                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN
+                ))
+            ))
+        page_update_modern(page)
+        
     def fechar_contas(e):
-        global ultima_venda,carrinho_s,total_valor
+        global ultima_venda,carrinho_s,total_valor,selected_account
+        selected_account=False
         id = e.control.key
         nome_clinte=e.control.bgcolor
         clientes.value=nome_clinte
@@ -694,7 +911,7 @@ def main(page: ft.Page):
                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN
                 ))
             ))
-        page.update()
+        page_update_modern(page)
         guardar()
         #Eliminar a Conta
         user=db.query(ContasAbertas).filter_by(id=id).first()
@@ -705,7 +922,7 @@ def main(page: ft.Page):
         contas.clear()
         for conta in getContas():
             contas.append(ft.dropdown.Option(conta.cliente))
-        page.update()
+        page_update_modern(page)
 
     
     
@@ -733,13 +950,14 @@ def main(page: ft.Page):
                     ft.DataCell(ft.Text(str(len(conta.produtos)))),
                     ft.DataCell(ft.Row([
                         ft.ElevatedButton("fechar",on_click=fechar_contas,key=conta.id,bgcolor=conta.cliente),
-                        ft.IconButton(icon=ft.icons.DELETE, icon_color=ft.colors.RED_600, key=conta.id, on_click=deletar_contas)
+                        ft.ElevatedButton("ver", icon=ft.icons.VISIBILITY,on_click=verProdutosConta,key=conta.id,bgcolor=conta.cliente),
+                        ft.IconButton(ft.icons.PRINT,on_click=print_conta,key=conta.id,bgcolor=conta.cliente)
                     ])),
                 ],
             ))
         
         # Atualizando a página com as mudanças
-        page.update()
+        page_update_modern(page)
 
     def mudar(e=""):
         user = db.query(ContasAbertas).filter_by(cliente=clientes.value).first()
@@ -759,7 +977,7 @@ def main(page: ft.Page):
                 ])
             ])
         nome_do_cliente.value = f"Cliente/Mesa: {clientes.value}"
-        page.update()
+        page_update_modern(page)
 
     clientes=ft.Dropdown()
     contas=[]
@@ -786,12 +1004,12 @@ def main(page: ft.Page):
         cliente_row.content=ft.Row([
         ])
         contas.append(ft.dropdown.Option("Sem Nome"))
-        page.update()
+        page_update_modern(page)
         for conta in ct:
             contas.append(ft.dropdown.Option(conta.cliente))
         clientes.options=contas
         update_contas_list()
-        page.update()
+        page_update_modern(page)
 
     
     
@@ -803,7 +1021,7 @@ def main(page: ft.Page):
             input_cliente,
             ft.ElevatedButton("adicionar",on_click=adicionar_contas)
         ])
-        page.update()
+        page_update_modern(page)
     
 
     def adicionarItem(e):
@@ -812,14 +1030,17 @@ def main(page: ft.Page):
             if len(carrinho_s)>=1:
                 addItemConta(carrinho_s,ms.id)
                 mudar()
+                limpar(e)
                 update_contas_list()
+                
+
             else:
                 cliente_row.content=ft.Text("O cliente nao tem nenhum pedido",color=ft.colors.RED_400,weight="bold")
 
             
         except:
             cliente_row.content=ft.Text("Crie um cliente primeiro",color=ft.colors.RED_400,weight="bold")
-        page.update()
+        page_update_modern(page)
     tabela_contas=ft.DataTable(
             columns=[
                 ft.DataColumn(ft.Text("Nome")),
@@ -866,20 +1087,35 @@ def main(page: ft.Page):
         
 
     def finalizar(e=''):
-        global carrinho
-        global preco_total
-        global carrinho_s
-        
+        global carrinho,preco_total,carrinho_s,total_valor,recebido1,recebido2
+        recebido1=0
+        recebido2=0
+
+        try:
+            recebido1=int(valor_pagar.value)
+        except:
+            recebido1=0
+
+        try:
+            recebido2=int(valor_pagar2.value)
+        except:
+            recebido2=0
+      
+        recebido=recebido1+recebido2
         for p in carrinho:
             preco_total+=p.preco
         
         if(len(carrinho_s)>=1):
-            if (float(valor_pagar.value))<getTotalMoneyCart(carrinho_s):
+            if (float(recebido))<getTotalMoneyCart(carrinho_s):
                 d=ft.AlertDialog(title=ft.Text("Aviso"),content=ft.Text("Nao pode Concluir o valor e \n menor que o Total"))
                 d.actions=[ft.TextButton("Fechar",on_click=lambda e:page.close(d))]
                 page.open(d)
                 return
             if(getRelatorioUnico(day)):
+                p = [
+                    {"metodo": pagamento.value, "valor": recebido1},
+                    {"metodo": pagamento2.value, "valor": recebido2}
+                ]
         
                 venda=ProdutoVenda(
                 data=datetime.now(),
@@ -890,9 +1126,9 @@ def main(page: ft.Page):
                 relatorio_id=getRelatorioUnico(day).id,
                 cliente=clientes.value,
                 funcionario=page.client_storage.get('user')['nome'],
-                metodo=pagamento.value)
+                metodo=json.dumps(p))
                 trocoView.value=""
-                page.update()
+                page_update_modern(page)
                 if(checkCartStock(carrinho_s)['resultado']):
                     addVenda(venda)
                     deduceStockCart(carrinho_s,getRelatorioUnico(day).id)
@@ -943,7 +1179,7 @@ def main(page: ft.Page):
     ])
     def back_to_perfil(e):
         card.content=choice_perfil
-        page.update()
+        page_update_modern(page)
     login_label=ft.Row([ft.IconButton(icon=ft.icons.ARROW_BACK,on_click=back_to_perfil),ft.Text(f"Dgite o seu pin")])
     login_perfil=ft.Column(
         [login_label,
@@ -1019,7 +1255,7 @@ def main(page: ft.Page):
 
     def novo_relatorio(e):
         relatorio_alert.open = False
-        page.update()
+        page_update_modern(page)
         rlt = db.query(RelatorioVenda).filter_by(nome=f"relatorio{day}").count()
         
         if rlt > 0:
@@ -1038,7 +1274,7 @@ def main(page: ft.Page):
             
     def fecha(e):
         dialogo.open=False
-        page.update()
+        page_update_modern(page)
     def relatorio_pdf(e):
         id=e.control.key
         relatorio=getRelatorioUnicoByID(id)
@@ -1051,16 +1287,26 @@ def main(page: ft.Page):
             total=totalVendaMoney(i.id)
             # print(total)
             total_tipo=totalVendaProdutos(i.id)
+            print(i.metodo)
+            # Verificar se o campo 'metodo' é válido JSON
+            if isinstance(i.metodo, str) and i.metodo.strip():
+                try:
+                    metodos_pagamento = json.loads(i.metodo)
+                except json.JSONDecodeError:
+                    metodos_pagamento = []  # Valor padrão em caso de erro
+            else:
+                metodos_pagamento = []  # Valor padrão se não for string ou estiver vazio
+
             vendas.append({
-                'id':i.id,
-                'hora':i.hora,
-                'produto_total':total_tipo,
-                'quantidade':f"{i.total_item}",
-                'total':f"{total}",
-                'cliente':f"{i.cliente}",
-                'caixa':f"{i.funcionario}",
-                'metodo':i.metodo,
-                'produtos':i.produtos
+                'id': i.id,
+                'hora': i.hora,
+                'produto_total': total_tipo,
+                'quantidade': f"{i.total_item}",
+                'total': f"{total}",
+                'cliente': f"{i.cliente}",
+                'caixa': f"{i.funcionario}",
+                'metodo': metodos_pagamento,  # Armazenar os métodos como dicionário ou lista
+                'produtos': i.produtos
             })
         relatorio_dict={
             'nome':relatorio.nome,
@@ -1075,12 +1321,10 @@ def main(page: ft.Page):
             print("relatorio de hoje")
             getHistoricoEstoque(getRelatorioUnico(day).id)
             fechar_relatorio(e)
-        res=gerar_relatorio_pdf(relatorio_dict,getRelatorioUnico(day).id)
+        res=gerar_relatorio_pdf(relatorio_dict,id)
         if res:
             page.open(ft.AlertDialog(title=ft.Text("Relatorio"),content=ft.Text("O pdf foi gerado com sucesso")))
-        else:
-            page.open(ft.AlertDialog(title=ft.Text("Relatorio"),content=ft.Text("O pdf sera quardado\n nos documentos/jp"),
-                                     actions=[ft.ElevatedButton("Imprimir PDF",on_click=relatorio_pdf,key=id)]))
+    
         
     lista=ft.Column()
     dal=ft.AlertDialog(title=ft.Text("Produtos Da Venda:"),content=ft.Container(content=lista))
@@ -1120,27 +1364,43 @@ def main(page: ft.Page):
 
     def ch(e):
         global ultima_venda,total_valor
-        ultima_venda['metodo']=e.control.value
-        if e.control.value !="Cash":
-            valor_pagar.value=total_valor
-            valor_pagar.disabled=True
-        else:
-            valor_pagar.disabled=False
+        valor_pagar.label=pagamento.value
+        page.update()
 
-    pagamento=ft.Dropdown(label="metodo de pagamento",
+    def ch2(e):
+        global ultima_venda,total_valor
+        page.update()
+
+    pagamento=ft.Dropdown(label="pagamento1",width=145,
                     options=[ft.dropdown.Option("Cash"),
                              ft.dropdown.Option("MPesa"),
+                             ft.dropdown.Option("IZI"),
                              ft.dropdown.Option("E-mola"),
                              ft.dropdown.Option("Paga Facil"),
                              ft.dropdown.Option("Ponto 24"),
                              ft.dropdown.Option("POS BIM"),
                              ft.dropdown.Option("POS BCI"),
                              ft.dropdown.Option("POS ABSA"),
-                             ft.dropdown.Option("POS MOZA BANCO"),
-                             ft.dropdown.Option("POS StanderBank"),
+                             ft.dropdown.Option("POS MOZA "),
+                             ft.dropdown.Option("StanderBank"),
                              ft.dropdown.Option("M-Cash")
 
                              ],on_change=ch)
+    pagamento2=ft.Dropdown(label="pagamento2",width=145,
+                    options=[ft.dropdown.Option("Cash"),
+                             ft.dropdown.Option("MPesa"),
+                             ft.dropdown.Option("IZI"),
+                             ft.dropdown.Option("E-mola"),
+                             ft.dropdown.Option("Paga Facil"),
+                             ft.dropdown.Option("Ponto 24"),
+                             ft.dropdown.Option("POS BIM"),
+                             ft.dropdown.Option("POS BCI"),
+                             ft.dropdown.Option("POS ABSA"),
+                             ft.dropdown.Option("POS MOZA "),
+                             ft.dropdown.Option("StanderBank"),
+                             ft.dropdown.Option("M-Cash")
+
+                             ],on_change=ch2)
 
     def see_more(e):
         vendas.controls.clear()
@@ -1188,7 +1448,7 @@ def main(page: ft.Page):
             )))
 
 
-        page.update()
+        page_update_modern(page)
 
 
     dialogo=ft.AlertDialog(title=ft.Text("PDV LITE"),
@@ -1198,22 +1458,30 @@ def main(page: ft.Page):
                            ] )
 
     valor_pagar=ft.TextField(label="valor recebido",on_change=write_payment2)
+    valor_pagar2=ft.TextField(label="segundo pagamento",on_change=write_payment3)
     trocoView=ft.Text(weight='bold',size=24,col=ft.colors.RED_500)
     
     def close_show(e):
         page.close(resumo_venda)
-    pagament=ft.AlertDialog(title=ft.Text("Pagamento"),content=ft.Container(width=300,height=340,content=ft.Column([
-        pagamento,
+    pagament=ft.AlertDialog(title=ft.Text("Pagamento"),content=ft.Container(width=300,height=360,content=ft.Column([
+                    ft.Row([pagamento,pagamento2]),
                     valor_pagar,
+                    valor_pagar2,
                     trocoView,
                     keyboard2
     ])))
     def guardar(e=''):
+        global selected_account
+
+        if selected_account:
+            page.open(ft.AlertDialog(title=ft.Text("Aviso"),content=ft.Text("Uma conta foi selencionada\n vai fechar a conta ou desmarque\n a conta")))
+            return
         pagamento.value="Cash"
         global ultima_venda
-        print(ultima_venda)
         valor_pagar.value=''
+        valor_pagar2.value=''
         page.open(pagament)
+
     def imprimir_fatuta(e):
         print_receipt(ultima_venda)
         page.close(resumo_venda)
@@ -1237,9 +1505,8 @@ def main(page: ft.Page):
 
 
     def limpar(e=''):
-        global carrinho
-        global quantidade_item
-        global carrinho_s
+        global carrinho,quantidade_item,carrinho_s,selected_account
+        selected_account=False
         carrinho_s=[]
         carrinho=[]
         quantidade_item=0
@@ -1256,7 +1523,7 @@ def main(page: ft.Page):
                 ])
             ]))
         lista_vendas.controls.clear()
-        page.update()
+        page_update_modern(page)
     help_dialog=ft.AlertDialog(title=ft.Text("Ajuda"),content=ft.Container(padding=10,width=300,content=ft.Text(
         "O aplicativo PDV LITE e um sistema que facilitas as vendas das lojas, restaurantes e farmacias, o aplicativo tem uma documentacao na web e uma playlist de aulas gratis, clique nas seguintes accoes e aproveite , o novo futura de mocambique"
     )),actions=[
@@ -1298,8 +1565,11 @@ def main(page: ft.Page):
     
 
     def adicionar_Carinho_m(e):
-        global quantidade_item
+        global quantidade_item,selected_account
         id = e.control.key
+        if selected_account:
+            page.open(ft.AlertDialog(title=ft.Text("Aviso"),content=ft.Text("Uma conta foi selencionada\n vai fechar a conta ou desmarque\n a conta")))
+            return
         produto = acharUmProduto(id)
         quantidade_valor = int(quantidade.value)
         Existe = False
@@ -1385,7 +1655,7 @@ def main(page: ft.Page):
                 ))
             ))
 
-        page.update()
+        page_update_modern(page)
 
     def delete_item(e):
         index=e.control.icon
@@ -1399,7 +1669,7 @@ def main(page: ft.Page):
         quantidade.value=1
         e.control.bgcolor="RED"
         lista_vendas.controls.clear()
-        page.update()
+        page_update_modern(page)
         quantidade_item+=int(quantidade.value)
         quantidade.value=""
         total_text.controls.clear()
@@ -1436,7 +1706,7 @@ def main(page: ft.Page):
                                 ],alignment=ft.MainAxisAlignment.SPACE_BETWEEN) 
                                 )))
             
-        page.update()
+        page_update_modern(page)
 
     def decrement_item(e):
         global carrinho_s, quantidade_item, total_valor
@@ -1505,7 +1775,7 @@ def main(page: ft.Page):
                 )
             )
 
-        page.update()
+        page_update_modern(page)
 
         if not Existe:
             print("O produto não está no carrinho.")
@@ -1513,7 +1783,10 @@ def main(page: ft.Page):
     
                   
     def adicionar_Carinho(e):
-        global quantidade_item,total_valor,ultima_venda
+        global quantidade_item,total_valor,ultima_venda,selected_account
+        if selected_account:
+            page.open(ft.AlertDialog(title=ft.Text("Aviso"),content=ft.Text("Uma conta foi selencionada\n vai fechar a conta ou desmarque\n a conta")))
+            return
         
         id = e.control.key
         produto = produto = acharUmProduto(id)
@@ -1602,10 +1875,13 @@ def main(page: ft.Page):
                 ))
             ))
 
-        page.update()
+        page_update_modern(page)
 
     def adicionar_Carinho_barCode(barcode):
-        global quantidade_item,total_valor,ultima_venda
+        global quantidade_item,total_valor,ultima_venda,selected_account
+        if selected_account:
+            page.open(ft.AlertDialog(title=ft.Text("Aviso"),content=ft.Text("Uma conta foi selencionada\n vai fechar a conta ou desmarque\n a conta")))
+            return
         
         produto = acharUmProduto_barcode(barcode)
         if produto:
@@ -1692,11 +1968,11 @@ def main(page: ft.Page):
                     ))
                 ))
 
-            page.update()
+            page_update_modern(page)
 
     def submit2(e):
         produtos.rows.clear()
-        page.update()
+        page_update_modern(page)
         if e.control.value=="Todos os Produtos":
             for i in verProdutos():
     
@@ -1745,11 +2021,11 @@ def main(page: ft.Page):
                     ],
                 ),
                 )
-        page.update()
+        page_update_modern(page)
             
     def submit(e):
         items_menu.controls.clear()
-        page.update()
+        page_update_modern(page)
         if e.control.value=="Todos os Produtos":
             for i in verProdutos():
            
@@ -1773,7 +2049,7 @@ def main(page: ft.Page):
                                             ft.Text(f'{i.preco} MZN',weight="bold",size=13,color=ft.colors.RED_700)
                                         ])
                                         ,on_hover=hovercard,on_click=adicionar_Carinho,on_long_press=dl_more_carinho,key=f'{i.id}')),) 
-        page.update()
+        page_update_modern(page)
     
     def hovercard(e):
         if e.data == "true":  # mouse entra
@@ -1782,10 +2058,10 @@ def main(page: ft.Page):
 
         else: 
             e.control.bgcolor=''
-        page.update()
+        page_update_modern(page)
     def update_menu():
         items_menu.controls.clear()
-        page.update()
+        page_update_modern(page)
         for i in verProdutos():
            
             items_menu.controls.append(
@@ -1797,7 +2073,7 @@ def main(page: ft.Page):
                                         ft.Text(f'{i.preco} MZN',weight="bold",size=13,color=ft.colors.RED_700)
                                     ])
                                     ,on_hover=hovercard,on_click=adicionar_Carinho,on_long_press=dl_more_carinho,key=f'{i.id}')),) 
-        page.update()
+        page_update_modern(page)
     quant_estoque=ft.TextField(label="Digite a quantidade")
 
     def fornecer(e):
@@ -1858,37 +2134,70 @@ def main(page: ft.Page):
         update_menu()
         update_produtos()
     def open_estoque(id):
-        global selected_item_id
-        selected_item_id=id
-        page.open(fornecer_dialog)
-    def update_produtos():
-        page.update()
+
+        if(page.client_storage.get('user')['cargo'])=='admin':
+            global selected_item_id
+            selected_item_id=id
+            page.open(fornecer_dialog)
+        else:
+            page.open(ft.AlertDialog(title=ft.Text("Aviso"),content=ft.Row([
+                ft.Icon(ft.icons.INFO,color=ft.colors.RED_600),
+                ft.Text("Nao tens permicao para \n editar produtos",weight="bold")
+            ])))
+        
+    async def carregar_produtos():
+        # Mostra o indicador de progresso
         produtos.rows.clear()
+        page_update_modern(page)
+
+        # Executa a atualização dos produtos em segundo plano
+        await asyncio.sleep(0.1)  # Aguarda para exibir o progresso antes de bloquear
+        produtos.rows.clear()
+
         for i in verProdutos():
-            
             produto_id = i.id  # Captura o ID do produto atual
             produtos.rows.append(
-                    ft.DataRow(
+                ft.DataRow(
                     cells=[
-                        ft.DataCell(ft.Row([ft.Image(f'{imagens}/{i.image}',width=80,height=40),ft.Text(i.titulo, weight="bold", size=14)])),
-                        ft.DataCell(ft.Text(f'{i.preco} MZN', weight="bold", size=13, color=ft.colors.RED_700)),
+                        ft.DataCell(
+                            ft.Row(
+                                [
+                                    ft.Image(f"{imagens}/{i.image}", width=80, height=40),
+                                    ft.Text(i.titulo, weight="bold", size=14),
+                                ]
+                            )
+                        ),
+                        ft.DataCell(
+                            ft.Text(f"{i.preco} MZN", weight="bold", size=13, color=ft.colors.RED_700)
+                        ),
                         ft.DataCell(ft.Text(i.barcode)),
                         ft.DataCell(ft.Text(i.categoria)),
-                        ft.DataCell(ft.Text(i.estoque,size=18,weight='bold')),
-                        
-                        ft.DataCell(ft.PopupMenuButton(
-                                    items=[
-                                        ft.PopupMenuItem(text="Editar", on_click=lambda e, produto_id=produto_id: atualizar(produto_id)),
-                                        ft.PopupMenuItem(text="Fornecer Produto",  on_click=lambda e, produto_id=produto_id: open_estoque(produto_id)),
-                                        ft.PopupMenuItem(text="Deletar", on_click=lambda e, produto_id=produto_id: eliminarProoduto(produto_id)),
-
-                                    ]
-                                ),),
+                        ft.DataCell(ft.Text(i.estoque, size=18, weight="bold")),
+                        ft.DataCell(
+                            ft.PopupMenuButton(
+                                items=[
+                                    ft.PopupMenuItem(
+                                        text="Editar",
+                                        on_click=lambda e, produto_id=produto_id: atualizar(produto_id),
+                                    ),
+                                    ft.PopupMenuItem(
+                                        text="Fornecer Produto",
+                                        on_click=lambda e, produto_id=produto_id: open_estoque(produto_id),
+                                    ),
+                                    ft.PopupMenuItem(
+                                        text="Deletar",
+                                        on_click=lambda e, produto_id=produto_id: eliminarProoduto(produto_id),
+                                    ),
+                                ]
+                            ),
+                        ),
                     ],
                 ),
-                )
-        
-        page.update()
+            )
+    def update_produtos():
+        # Executa o carregamento em segundo plano
+        asyncio.run(carregar_produtos())
+    page_update_modern(page)
 
     lista_relatorio=ft.ListView(width=200,height=700)  
     alert_delete=ft.AlertDialog(title=ft.Text("Aviso"))  
@@ -1914,7 +2223,7 @@ def main(page: ft.Page):
             ])))
     def relatorio_update():
         lista_relatorio.controls.clear()
-        page.update()
+        page_update_modern(page)
         for i in getRelatorios():
             total=totalVendaMoneyRelatorio(i.data)
             lista_relatorio.controls.append(
@@ -1946,8 +2255,8 @@ def main(page: ft.Page):
                 )
             body.content = relatoriosBody
             
-            page.update()
-        page.update()
+            page_update_modern(page)
+        page_update_modern(page)
 
     
     lista_vendas=ft.ListView(height=380)
@@ -2005,16 +2314,44 @@ def main(page: ft.Page):
             )
         ])
     )
+    def caregar_db(e):
+        path=str(input_file_path.value)
+        path2=path.replace("\\",'/')
+        res=carregarProdutos(path2)
+        if 'foram carregados' in res:
+            update_produtos()
+            page_update_modern(page)
+            page.open(ft.AlertDialog(title=ft.Text("PDV Lite"),content=ft.Row([
+                ft.Icon(ft.icons.INFO,color=ft.colors.GREEN_500),
+                ft.Text(res,weight="bold")
+            ])))
+        else:
+            page.open(ft.AlertDialog(title=ft.Text("PDV Lite"),content=ft.Row([
+                ft.Icon(ft.icons.INFO,color=ft.colors.RED_500),
+                ft.Text(res,weight="bold")
+            ])))
+
     def imprimir_todos(e):
         produtos = db.query(Produto).order_by(asc(Produto.titulo)).all()
         gerar_pdf_produtos(produtos)
-        
+    input_file_path=ft.TextField(label="Digite o caminho do db antigo")
+    load_data_dialog=ft.AlertDialog(title=ft.Text("Carregar Produtos do outro Banco"),
+                                    content=ft.Column(height=100,controls=[
+                                        input_file_path,
+                                        ft.ResponsiveRow([ft.CupertinoButton("Carregar Os Produtos",
+                                                                              bgcolor=ft.colors.ORANGE_600,on_click=caregar_db)])
+                                    ]))
+
+    def open_load_db(e):
+        page.open(load_data_dialog)
     produtoBody=ft.Container(
        content=ft.Column([
            ft.Container(padding=10,border_radius=10,bgcolor="white",content=ft.Row(controls=[
                             ft.Text(info['app'],size=30,weight="bold",color=ft.colors.RED_500),
                             search_categoria2,
                             search2,
+                            ft.IconButton(ft.icons.UPLOAD,bgcolor=ft.colors.ORANGE_100,icon_color=ft.colors.ORANGE_600,
+                                          tooltip="caregar produtos \n doutro banco de dados", on_click=open_load_db),
                             ft.CupertinoButton(text="Imprimir Tudo",bgcolor=ft.colors.ORANGE_600,on_click=imprimir_todos)
                         ],alignment=ft.MainAxisAlignment.SPACE_BETWEEN)),
                         produtos_table_itens
@@ -2037,14 +2374,14 @@ def main(page: ft.Page):
         if(userLoged().senha==cng_old.value):
             cng_old.label="Digite a senha anterior"
             cng_old.border_color=None
-            page.update()
+            page_update_modern(page)
             changePassword(userLoged(),cng_new.value)
             cng.open=False
-            page.update()
+            page_update_modern(page)
         else:
             cng_old.label="por favor tente novamente"
             cng_old.border_color="red"
-            page.update()
+            page_update_modern(page)
     cng_old=ft.TextField(label='Digite a senha anterior')
     cng_new=ft.TextField(label='Digite a nova senha ')
     cng=ft.AlertDialog(title=ft.Text('Mudar a senha do usuario'), content=ft.Column(controls=[
@@ -2068,7 +2405,7 @@ def main(page: ft.Page):
                         ],
                     ),)
             tabela.rows=funcionarios
-            page.update()
+            page_update_modern(page)
 
 
     userDialog=ft.AlertDialog(title=ft.Text("Adicionar Usuario"),
@@ -2098,7 +2435,7 @@ def main(page: ft.Page):
                         ],
                     ),)
             tabela.rows=funcionarios
-            page.update()
+            page_update_modern(page)
             
 
     funcionarios=[]
@@ -2136,7 +2473,7 @@ def main(page: ft.Page):
     
     def cancel_dlg(event):
         dlg.open=False
-        page.update()
+        page_update_modern(page)
     def update_produto(e):
         global dlg_edit,selected_file_path
         destination_dir = os.path.join(os.getenv("LOCALAPPDATA"), ".jpInvest/img")
@@ -2154,7 +2491,7 @@ def main(page: ft.Page):
                 status_text.value = "Foto copiada com sucesso!"
             except Exception as ex:
                 status_text.value = f"Erro ao copiar a foto: {ex}"
-            page.update()
+            page_update_modern(page)
             
 
     
@@ -2173,16 +2510,16 @@ def main(page: ft.Page):
         selected_file_path=None
         AtualisarProduto(int(e.control.key),pdt)
         dlg_edit.open=False
-        page.update()
+        page_update_modern(page)
         update_menu()
         update_produtos()
-        page.update()
+        page_update_modern(page)
         
     def add(e):
         global selected_file_path
         if not selected_file_path:
             status_text.value = "Por favor, selecione um arquivo primeiro."
-            page.update()
+            page_update_modern(page)
             return
         destination_dir = os.path.join(os.getenv("LOCALAPPDATA"), ".jpInvest/img")
         if not os.path.exists(destination_dir):
@@ -2194,10 +2531,10 @@ def main(page: ft.Page):
             status_text.value = "Foto copiada com sucesso!"
         except Exception as ex:
             status_text.value = f"Erro ao copiar a foto: {ex}"
-        page.update()
+        page_update_modern(page)
         CadastrarProduto(nome_input.value,barcode.value, categoria.value,preco_input.value, estoque.value, filename,getRelatorioUnico(day).id)
         dlg.open=False
-        page.update()
+        page_update_modern(page)
         update_menu()
         update_produtos()
         selected_file_path=None
@@ -2281,7 +2618,7 @@ def main(page: ft.Page):
     )
     def close_about(e):
         about.open=False
-        page.update()
+        page_update_modern(page)
     about=ft.AlertDialog(
         title=ft.Text("Sobre PDV Lite v1.0 - Lichinga"),
         content=ft.Container(
